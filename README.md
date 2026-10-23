@@ -1,7 +1,7 @@
 # MNIST ile MLP Tabanlı El Yazısı Rakam Tanıma
 
 **Ders:** Derin Öğrenme  
-**Öğrenci:** _[Ad Soyad]_ — 24120205078
+**Öğrenci:** Ahmet KARGI — 24120205078
 
 Bu projede MNIST veri seti üzerinde **sıfırdan** eğitilen bir Multi-Layer Perceptron (MLP) ile el yazısı rakam tanıma yapılmıştır. Temel modelin ardından learning rate, optimizer, mimari ve dropout ayarları tek tek değiştirilerek etkileri karşılaştırılmış, son olarak model kendi el yazımla yazdığım okul numaram üzerinde test edilmiştir.
 
