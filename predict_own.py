@@ -52,38 +52,47 @@ def find_digits(mask):
     """Rakam maskelerini soldan sağa sıralı olarak döndürür: [(maske, (x, y, w, h)), ...]"""
     n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     H, W = mask.shape
-    comps = []
+    comps = []  # [x0, y0, x1, y1, alan, [bileşen id'leri]]
     for i in range(1, n):
         x, y, w, h, area = stats[i]
-        touches_border = x == 0 or y == 0 or x + w >= W or y + h >= H
-        if not touches_border:
-            comps.append([x, x + w, [i]])
+        touches_border = x == 0 or y == 0 or x + w >= W or y + h >= H  # kağıt kenarı, masa vb.
+        if not touches_border and h < 0.5 * H and w < 0.5 * W:
+            comps.append([x, y, x + w, y + h, area, [i]])
     if not comps:
         return []
-    max_area = max(stats[c[2][0], cv2.CC_STAT_AREA] for c in comps)
-    comps = [c for c in comps if stats[c[2][0], cv2.CC_STAT_AREA] > 0.01 * max_area]  # gürültü noktaları
+    max_area = max(c[4] for c in comps)
+    comps = [c for c in comps if c[4] > 0.01 * max_area]  # gürültü noktaları
 
-    # Yatayda üst üste binen parçaları birleştir (ör. 5'in şapkası, kopuk çizilmiş 4)
+    # Numara tek satırda yazıldığı için satırın dikey merkezini bul (alan ağırlıklı medyan):
+    # rakamlar en çok mürekkebi oluşturur, lekeler bu merkezi kaydıramaz.
+    centers = np.array([(c[1] + c[3]) / 2 for c in comps])
+    weights = np.array([c[4] for c in comps], dtype=float)
+    order = np.argsort(centers)
+    line_y = centers[order][np.searchsorted(np.cumsum(weights[order]), weights.sum() / 2)]
+    comps = [c for c in comps if c[1] <= line_y <= c[3]]  # sadece satırı kesen parçalar
+
+    # Hem yatayda hem dikeyde örtüşen parçaları birleştir (ör. 5'in şapkası, kopuk çizilmiş 4)
     comps.sort(key=lambda c: c[0])
     groups = [comps[0]]
-    for x0, x1, ids in comps[1:]:
-        gx0, gx1, gids = groups[-1]
-        overlap = min(x1, gx1) - max(x0, gx0)
-        if overlap > 0.5 * min(x1 - x0, gx1 - gx0):
-            groups[-1] = [gx0, max(x1, gx1), gids + ids]
+    for c in comps[1:]:
+        g = groups[-1]
+        x_overlap = min(c[2], g[2]) - max(c[0], g[0])
+        if x_overlap > 0.5 * min(c[2] - c[0], g[2] - g[0]):
+            groups[-1] = [min(c[0], g[0]), min(c[1], g[1]), max(c[2], g[2]), max(c[3], g[3]),
+                          c[4] + g[4], g[5] + c[5]]
         else:
-            groups.append([x0, x1, ids])
+            groups.append(c)
 
     digits = []
-    for _, _, ids in groups:
-        digit_mask = np.isin(labels, ids).astype(np.uint8) * 255
+    for g in groups:
+        digit_mask = np.isin(labels, g[5]).astype(np.uint8) * 255
         x, y, w, h = cv2.boundingRect(digit_mask)
         digits.append((digit_mask[y:y + h, x:x + w], (x, y, w, h)))
-    max_h = max(box[3] for _, box in digits)
-    return [d for d in digits if d[1][3] > 0.4 * max_h]  # rakamdan çok küçük lekeleri at
+    median_h = np.median([box[3] for _, box in digits])
+    return [d for d in digits if d[1][3] > 0.4 * median_h]  # rakamdan çok küçük lekeleri at
 
 
-def to_mnist(crop, thicken=True):
+def to_mnist(crop, thicken=True, center=True):
     """Kırpılmış rakam maskesini MNIST tarzı 28x28, 0-1 aralığında görüntüye çevirir."""
     h, w = crop.shape
     if thicken:
@@ -106,7 +115,7 @@ def to_mnist(crop, thicken=True):
     # Ağırlık merkezini (14, 14)'e kaydır. MLP konum değişimine karşı dayanıksızdır
     # (piksel 300'ün anlamı her zaman aynıdır), bu yüzden ortalama kritik.
     m = cv2.moments(img)
-    if m["m00"] > 0:
+    if center and m["m00"] > 0:
         dx, dy = 14 - m["m10"] / m["m00"], 14 - m["m01"] / m["m00"]
         img = cv2.warpAffine(img, np.float32([[1, 0, dx], [0, 1, dy]]), (28, 28))
     return np.clip(img, 0, 1)
@@ -151,7 +160,7 @@ def save_figures(gray, flat, mask, digits, images, preds, confs, label, out_pref
         ax.imshow(images[i], cmap="gray", vmin=0, vmax=1)
         true = label[i] if label and i < len(label) else None
         color = "black" if true is None else ("green" if str(preds[i]) == true else "red")
-        ax.set_title(f"tahmin {preds[i]}\n%{100 * confs[i]:.0f}" + (f"\n(gerçek {true})" if true else ""),
+        ax.set_title(f"tahmin {preds[i]}\n%{100 * confs[i]:.1f}" + (f"\n(gerçek {true})" if true else ""),
                      color=color, fontsize=10)
         ax.axis("off")
     plt.tight_layout()
@@ -166,6 +175,8 @@ def main():
     parser.add_argument("--model", default="models/deney1_temel.pt")
     parser.add_argument("--all-models", action="store_true", help="models/ içindeki tüm modelleri karşılaştır")
     parser.add_argument("--no-thicken", action="store_true", help="çizgi kalınlaştırmayı kapat")
+    parser.add_argument("--ablation", action="store_true",
+                        help="ön işleme adımlarını tek tek kapatıp doğruluğa etkisini ölç")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -205,6 +216,21 @@ def main():
             pred_str = "".join(map(str, p))
             score = sum(a == b for a, b in zip(pred_str, args.label)) if args.label else "-"
             print(f"{os.path.basename(path)[:-3]:28s} {pred_str:>14s}  {score}")
+
+    if args.ablation:
+        # Her satırda tam ön işlemeden TEK bir adım çıkarılır (MNIST ile dağılım farkı büyür)
+        variants = {
+            "Tam ön işleme": [to_mnist(c) for c, _ in digits],
+            "Kalınlaştırma yok": [to_mnist(c, thicken=False) for c, _ in digits],
+            "Ağırlık merkezi ortalama yok": [to_mnist(c, center=False) for c, _ in digits],
+            "Renk ters çevirme yok": [1 - to_mnist(c) for c, _ in digits],
+        }
+        print(f"\n{'Ön işleme (' + os.path.basename(args.model)[:-3] + ')':34s} {'Tahmin':>14s}  Doğru  Ort. güven")
+        for title, ims in variants.items():
+            p, conf = predict(model, mean, std, ims, device)
+            pred_str = "".join(map(str, p))
+            score = sum(a == b for a, b in zip(pred_str, args.label)) if args.label else "-"
+            print(f"{title:34s} {pred_str:>14s}  {score}  %{100 * conf.mean():.1f}")
 
 
 if __name__ == "__main__":

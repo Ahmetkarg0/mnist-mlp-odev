@@ -1,7 +1,7 @@
 # MNIST ile MLP Tabanlı El Yazısı Rakam Tanıma
 
 **Ders:** Derin Öğrenme  
-**Öğrenci:** _[Ad Soyad]_ — _[Okul Numarası]_
+**Öğrenci:** _[Ad Soyad]_ — 24120205078
 
 Bu projede MNIST veri seti üzerinde **sıfırdan** eğitilen bir Multi-Layer Perceptron (MLP) ile el yazısı rakam tanıma yapılmıştır. Temel modelin ardından learning rate, optimizer, mimari ve dropout ayarları tek tek değiştirilerek etkileri karşılaştırılmış, son olarak model kendi el yazımla yazdığım okul numaram üzerinde test edilmiştir.
 
@@ -218,30 +218,92 @@ Validation accuracy'ye göre en iyi modeller 1024-512 ve 512-256-128-64 (her iki
 
 ## 8. Kendi el yazımla test (okul numaram)
 
-> ⚠️ **Bu bölüm henüz doldurulmadı.** El yazısı fotoğrafı `el_yazisi/` klasörüne eklendikten sonra `predict_own.py` çalıştırılıp sonuçlar buraya eklenecek.
+Okul numaram (**24120205078**) beyaz bir A4 kağıda kendi el yazımla yazılıp telefonla fotoğraflandı:
+
+![El yazısı okul numaram](el_yazisi/numara.jpg)
+
+```bash
+python predict_own.py el_yazisi/numara.jpg --label 24120205078 --all-models --ablation
+```
 
 ### Görüntülerin hazırlanması
 
-Okul numaram beyaz kağıda koyu kalemle yazılıp telefonla fotoğraflandı. [`predict_own.py`](predict_own.py) fotoğrafı MNIST formatına şu adımlarla dönüştürüyor:
+[`predict_own.py`](predict_own.py) fotoğrafı MNIST formatına şu adımlarla dönüştürüyor:
 
 | # | Adım | Neden? |
 |---|---|---|
 | 1 | **Gri tonlama** (+ telefonun EXIF yön bilgisinin uygulanması) | MNIST tek kanallı gri görüntülerden oluşur |
 | 2 | **Aydınlatma düzeltme:** kağıdın arka plan parlaklığı büyük çekirdekli morfolojik *closing* ile tahmin edilip görüntü buna bölünür | Fotoğraftaki gölge ve ışık farkları eşiklemeyi bozmasın |
 | 3 | **Otsu eşikleme + renk ters çevirme** | Kağıtta beyaz zemin üzerine siyah yazı var, MNIST'te **siyah zemin üzerine beyaz rakam** |
-| 4 | **Rakamları ayırma:** bağlantılı bileşenler, yatayda örtüşen parçaların birleştirilmesi, soldan sağa sıralama | Model tek seferde tek rakam bekler |
+| 4 | **Rakamları ayırma:** bağlantılı bileşenler, kenara değen ve çok küçük lekelerin atılması, yazı satırının (alan ağırlıklı medyan) bulunup sadece satırı kesen parçaların tutulması, yatayda örtüşen parçaların birleştirilmesi, soldan sağa sıralama | Model tek seferde tek rakam bekler |
 | 5 | **Çizgi kalınlaştırma** (dilation, hedef kalınlık ≈ rakam boyunun %12'si) | Kalem çizgisi MNIST'e göre çok ince. Küçültülünce silikleşir |
 | 6 | **En-boy oranı korunarak 20×20 kutuya sığdırma** | MNIST'in kendi hazırlanma yöntemi |
 | 7 | **28×28 içine ağırlık merkezi (14,14)'te olacak şekilde yerleştirme** | MNIST'in kendi yöntemi. MLP'de konum kritik (aşağıya bakınız) |
 | 8 | **Normalizasyon:** eğitimdeki ile aynı `(x − 0.1307) / 0.3082` | Model eğitimde gördüğü ölçeği bekler |
 
-_[Ön işleme görseli: `outputs/el_yazisi_<ad>_on_isleme.png`]_
+![Ön işleme adımları](outputs/el_yazisi_numara_on_isleme.png)
 
-_[Tahmin görseli: `outputs/el_yazisi_<ad>_tahminler.png`]_
+Modele verilen 28×28 görüntüler [`el_yazisi/islenmis/`](el_yazisi/islenmis/) klasörüne kaydedilmiştir.
 
-### Sonuçlar
+> **Karşılaşılan bir sorun:** Kodun ilk sürümü 11 rakam yerine yalnızca **1** "rakam" buldu. Fotoğrafın sağ altındaki koyu masa kenarı eşiklemede küçük beyaz lekelere dönüşmüş, kod da yatayda örtüşen bir lekeyi `0` ile birleştirip dev bir kutu oluşturmuştu. Satır tespiti (adım 4) eklendikten sonra 11 rakamın 11'i de doğru ayrıldı. Gerçek dünya verisi MNIST gibi temiz ve ortalanmış gelmiyor; modelden önce veri hattı da sağlam olmalı.
 
-_[Gerçek numara / tahmin / doğruluk ve modellerin karşılaştırma tablosu buraya eklenecek]_
+### Sonuçlar – temel model (Deney 1)
+
+![Tahminler](outputs/el_yazisi_numara_tahminler.png)
+
+| | |
+|---|---|
+| Gerçek numara | `24120205078` |
+| Tahmin | `2`**`6`**`120205078` |
+| **Doğruluk** | **10 / 11 = %90.9** |
+| MNIST test doğruluğu (karşılaştırma için) | %98.27 |
+
+Tek hata **ikinci hane olan `4`**. Model bu rakamı **%99.97 güvenle `6`** olarak tahmin etti; doğru sınıf `4`'e verdiği olasılık yalnızca **%0.01**.
+
+### Tüm modellerin karşılaştırması
+
+| Model | Tahmin | Doğru (11 hane) |
+|---|---|---|
+| deney1_temel | 26120205078 | 10 |
+| deney2_lr_0.1 | 11111111111 | 1 |
+| deney2_lr_0.01 | 26120205078 | 10 |
+| deney2_lr_0.0001 | 26120205078 | 10 |
+| deney3_sgd_momentum | 26120205078 | 10 |
+| deney3_sgd_saf | 26120205**5**78 | 9 |
+| deney4_kucuk_64_32 | 26120205078 | 10 |
+| deney4_genis_1024_512 | 26120205078 | 10 |
+| deney4_derin_4katman | 26120205078 | 10 |
+| **deney5_dropout_0.2** | **24120205078** | **11** |
+| deney5_dropout_0.5 | 26120205078 | 10 |
+| deney6_seed_1 / 2 / 3 | 26120205078 | 10 |
+| deney6_seed_4 | 241202050**2**8 | 10 |
+
+`4` rakamı için olasılıklar:
+
+| Model | P(4) | P(6) | Ortalama güven (11 hane) |
+|---|---|---|---|
+| deney1_temel | %0.01 | **%99.97** | %100.0 |
+| deney5_dropout_0.2 | **%69.0** | %31.0 | %96.6 |
+| deney6_seed_4 | **%76.6** | %23.1 | %94.0 |
+
+### Ön işleme ablasyonu (temel model)
+
+Tam ön işlemeden **tek bir adım** çıkarıldığında:
+
+| Ön işleme | Tahmin | Doğru | Ortalama güven |
+|---|---|---|---|
+| Tam ön işleme | 26120205078 | 10 / 11 | %100.0 |
+| Çizgi kalınlaştırma yok | 16120205078 | 9 / 11 | %97.0 |
+| Ağırlık merkezi ortalama yok | 10120205028 | 8 / 11 | %95.9 |
+| **Renk ters çevirme yok** (beyaz zemin, siyah rakam) | 33333333333 | **0 / 11** | **%100.0** |
+
+### Yorum
+
+- **Hata sistematik, rastgele değil.** 15 modelin 12'si aynı `4 → 6` hatasını yapıyor (lr = 0.1 modeli zaten her şeye `1` diyor). Benim `4`'üm üstü açık yazılmış; sağdaki dikey çizgi kısa ve yatay çizgiyle sadece kesişiyor. MNIST'teki 4'lerin çoğunda ise sağ dikey çizgi uzun ve baskın. Bu rakam, eğitim dağılımının "kenarında" kalan bir yazım stili. Model hangi ayarla eğitilirse eğitilsin bu stili çok az görmüş.
+- **Model yanlışken de %100 emin.** Temel model `4`'e %0.01 olasılık veriyor. Deney 1'de validation loss artarken gözlemlediğimiz **aşırı güven (overconfidence)**, gerçek dünya verisinde de açıkça görülüyor: softmax olasılığı "doğru olma olasılığı" olarak okunamaz.
+- **Dropout daha "dürüst" bir model üretiyor.** Dropout 0.2'li model `4`'ü doğru tahmin ediyor (%69). Daha önemlisi, %31 ile `6`'yı da düşünerek kararsız olduğunu belli ediyor. Bu, Deney 5'teki "dropout validation loss'u düşürür, yani daha kalibre olur" bulgusuyla tutarlı. Ancak 11 rakamlık bir örnekte 1 hanelik fark istatistiksel olarak zayıf; bu yüzden model seçimi bu sonuca göre **yapılmamıştır** (seçim validation'a göre yapılır, el yazısı da test gibi yalnızca ölçüm içindir).
+- **lr = 0.1 modeli her şeye `1` diyor.** Bu, Deney 2'deki "loss ln(10)'da takılı kaldı, model her girdiye aynı çıktıyı veriyor" yorumunun doğrudan kanıtı.
+- **Ablasyon, dağılım farkına duyarlılığı sayılarla gösteriyor.** Renkler ters çevrilmezse model 11 rakamın hepsine **%100 güvenle `3`** diyor. Model, eğitimde hiç görmediği bir girdiyle karşılaştığını fark etmiyor. Ortalama yapılmazsa doğruluk 8/11'e düşüyor. Bu, MLP'nin konuma duyarlı olduğunun doğrudan kanıtı. Kalınlaştırma yapılmazsa ince `2`, `1` sanılıyor.
 
 ---
 
@@ -253,4 +315,8 @@ _[Gerçek numara / tahmin / doğruluk ve modellerin karşılaştırma tablosu bu
 4. **Model büyütmenin getirisi azalıyor.** 5.7 kat parametre yalnızca ~%0.1–0.2 kazandırdı. Dropout ise doğruluğu değiştirmeden overfitting'i azalttı.
 5. **Küçük farkları yorumlarken dikkatli olunmalı.** Sadece seed değişince bile doğruluk ±%0.1–0.2 oynuyor.
 6. **MLP'nin yapısal sınırı:** MLP görüntüyü 784 bağımsız sayıdan oluşan bir vektör olarak görür. Pikseller arasındaki komşuluk ilişkisini bilmez ve **kaymaya karşı dayanıklı değildir** (aynı rakam 3 piksel sağa kaydığında tamamen farklı girdi nöronları aktive olur). Parametrelerin %85'i yalnızca ilk katmanda bulunur. Bu nedenle gerçek dünya görüntülerinde ön işleme (ortalama, ölçekleme) belirleyicidir. CNN'ler bu sorunu paylaşılan küçük filtrelerle çözer, ancak bu ödevin kapsamı dışındadır.
-7. **Distribution shift (MNIST ↔ kendi el yazım):** _[El yazısı sonuçları eklendikten sonra yorumlanacak]_
+7. **Distribution shift (MNIST ↔ kendi el yazım):** Model MNIST testinde %98.27 doğruluk verirken, kendi yazdığım 11 hanelik numarada **%90.9 (10/11)** doğruluk elde etti. 11 örnek az olduğu için bu oran kesin bir ölçüm değil, ama farkın nedenleri net olarak görülüyor:
+   - MNIST'teki rakamlar 1990'larda Amerikalı öğrenci ve memurlardan toplanmış, taranmış ve özenle normalize edilmiş görüntülerdir. Benim fotoğrafımda ise farklı bir yazım stili (üstü açık `4`), kalem kalınlığı, ışık, gölge ve arka plan nesneleri var.
+   - Fotoğrafı MNIST'e benzetmek için yapılan **her ön işleme adımı gerekli çıktı**. Renk ters çevrilmeyince doğruluk %0'a, ortalama yapılmayınca 8/11'e düştü. Model yalnızca eğitim dağılımına benzeyen veride iyi çalışıyor.
+   - En tehlikeli bulgu: model dağılım dışı (out-of-distribution) girdilerde **hata yaparken bile %100 emin**. Dolayısıyla gerçek bir uygulamada yüksek softmax güveni tek başına güvenilir bir işaret değildir.
+   - Gerçek dünyada genellemeyi artırmak için yapılabilecekler: eğitimde **veri artırma** (küçük döndürme, kaydırma, kalınlık değişimi), dropout gibi **regularization**, kendi el yazısı örneklerinin eğitime eklenmesi ve görüntünün uzamsal yapısını kullanan **CNN** mimarileri (bu ödevin kapsamı dışında).
