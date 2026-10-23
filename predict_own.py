@@ -1,20 +1,3 @@
-"""
-Adım 5 - Kendi el yazısı rakamlarla test
-
-Bir kağıda yazılmış okul numarasının fotoğrafı MNIST formatına dönüştürülür:
-    1. Gri tonlama (+ telefonun EXIF döndürme bilgisinin uygulanması)
-    2. Aydınlatma düzeltme: kağıdın arka planı tahmin edilip görüntü ona bölünür
-    3. Eşikleme (Otsu) + renk ters çevirme -> siyah arka plan, beyaz rakam (MNIST gibi)
-    4. Bağlantılı bileşenlerle rakamları bulma, soldan sağa sıralama
-    5. Her rakamı: kırp -> çizgiyi kalınlaştır -> en-boy oranını koruyarak 20x20 kutuya sığdır
-       -> 28x28 içine ağırlık merkezi ortada olacak şekilde yerleştir (MNIST'in kendi yöntemi)
-    6. Train kümesinin mean/std değeriyle normalizasyon
-
-Kullanım:
-    python predict_own.py el_yazisi/numara.jpg --label 2021123456
-    python predict_own.py el_yazisi/numara.jpg --label 2021123456 --all-models
-"""
-
 import argparse
 import glob
 import os
@@ -29,8 +12,8 @@ from model import MLP
 
 
 def load_gray(path, max_side=1200):
-    # cv2.imread Windows'ta Türkçe karakterli yollarda ("Masaüstü") çalışmadığı için PIL ile okuyoruz
-    img = ImageOps.exif_transpose(Image.open(path))  # telefon fotoğraflarının yönünü düzelt
+    # cv2.imread Windows'ta Türkçe karakterli yollarda ("Masaüstü") çalışmıyor
+    img = ImageOps.exif_transpose(Image.open(path))
     gray = np.array(img.convert("L"))
     scale = max_side / max(gray.shape)
     if scale < 1:
@@ -39,39 +22,36 @@ def load_gray(path, max_side=1200):
 
 
 def binarize(gray):
-    """Beyaz kağıt üstü koyu mürekkep -> siyah zemin üstü beyaz rakam maskesi (0/255)."""
-    # Büyük çekirdekli "closing", koyu ince çizgileri silip sadece kağıdın parlaklığını bırakır.
+    # Büyük çekirdekli closing ince koyu çizgileri silip sadece kağıdın parlaklığını bırakır
     background = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, np.ones((41, 41), np.uint8))
-    flat = cv2.divide(gray, background, scale=255)  # gölge / ışık farkı giderilir
+    flat = cv2.divide(gray, background, scale=255)
     flat = cv2.GaussianBlur(flat, (5, 5), 0)
     _, mask = cv2.threshold(flat, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     return flat, mask
 
 
 def find_digits(mask):
-    """Rakam maskelerini soldan sağa sıralı olarak döndürür: [(maske, (x, y, w, h)), ...]"""
     n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     H, W = mask.shape
     comps = []  # [x0, y0, x1, y1, alan, [bileşen id'leri]]
     for i in range(1, n):
         x, y, w, h, area = stats[i]
-        touches_border = x == 0 or y == 0 or x + w >= W or y + h >= H  # kağıt kenarı, masa vb.
+        touches_border = x == 0 or y == 0 or x + w >= W or y + h >= H
         if not touches_border and h < 0.5 * H and w < 0.5 * W:
             comps.append([x, y, x + w, y + h, area, [i]])
     if not comps:
         return []
     max_area = max(c[4] for c in comps)
-    comps = [c for c in comps if c[4] > 0.01 * max_area]  # gürültü noktaları
+    comps = [c for c in comps if c[4] > 0.01 * max_area]
 
-    # Numara tek satırda yazıldığı için satırın dikey merkezini bul (alan ağırlıklı medyan):
-    # rakamlar en çok mürekkebi oluşturur, lekeler bu merkezi kaydıramaz.
+    # Yazı satırının dikey merkezi (alan ağırlıklı medyan); sadece satırı kesen parçalar kalır
     centers = np.array([(c[1] + c[3]) / 2 for c in comps])
     weights = np.array([c[4] for c in comps], dtype=float)
     order = np.argsort(centers)
     line_y = centers[order][np.searchsorted(np.cumsum(weights[order]), weights.sum() / 2)]
-    comps = [c for c in comps if c[1] <= line_y <= c[3]]  # sadece satırı kesen parçalar
+    comps = [c for c in comps if c[1] <= line_y <= c[3]]
 
-    # Hem yatayda hem dikeyde örtüşen parçaları birleştir (ör. 5'in şapkası, kopuk çizilmiş 4)
+    # Yatayda örtüşen parçalar aynı rakamdır (ör. 5'in şapkası)
     comps.sort(key=lambda c: c[0])
     groups = [comps[0]]
     for c in comps[1:]:
@@ -89,14 +69,13 @@ def find_digits(mask):
         x, y, w, h = cv2.boundingRect(digit_mask)
         digits.append((digit_mask[y:y + h, x:x + w], (x, y, w, h)))
     median_h = np.median([box[3] for _, box in digits])
-    return [d for d in digits if d[1][3] > 0.4 * median_h]  # rakamdan çok küçük lekeleri at
+    return [d for d in digits if d[1][3] > 0.4 * median_h]
 
 
 def to_mnist(crop, thicken=True, center=True):
-    """Kırpılmış rakam maskesini MNIST tarzı 28x28, 0-1 aralığında görüntüye çevirir."""
     h, w = crop.shape
     if thicken:
-        # MNIST'te çizgi kalınlığı rakam boyunun ~%12'si; kalem çizgisi genelde çok daha ince.
+        # MNIST'te çizgi kalınlığı rakam boyunun ~%12'si
         stroke = 2 * cv2.distanceTransform(crop, cv2.DIST_L2, 3).max()
         k = int(round(0.12 * max(h, w) - stroke))
         if k >= 2:
@@ -104,7 +83,7 @@ def to_mnist(crop, thicken=True, center=True):
             crop = cv2.dilate(crop, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
             h, w = crop.shape
 
-    scale = 20.0 / max(h, w)  # uzun kenar 20 piksel, en-boy oranı korunur
+    scale = 20.0 / max(h, w)
     new_w, new_h = max(1, round(w * scale)), max(1, round(h * scale))
     small = cv2.resize(crop.astype(np.float32) / 255.0, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
@@ -112,8 +91,6 @@ def to_mnist(crop, thicken=True, center=True):
     top, left = (28 - new_h) // 2, (28 - new_w) // 2
     img[top:top + new_h, left:left + new_w] = small
 
-    # Ağırlık merkezini (14, 14)'e kaydır. MLP konum değişimine karşı dayanıksızdır
-    # (piksel 300'ün anlamı her zaman aynıdır), bu yüzden ortalama kritik.
     m = cv2.moments(img)
     if center and m["m00"] > 0:
         dx, dy = 14 - m["m10"] / m["m00"], 14 - m["m01"] / m["m00"]
@@ -132,14 +109,13 @@ def load_model(path, device):
 
 @torch.no_grad()
 def predict(model, mean, std, images, device):
-    x = torch.tensor(np.stack(images)).unsqueeze(1).to(device)  # [N, 1, 28, 28]
-    x = (x - mean) / std  # eğitimdeki normalizasyonun AYNISI
+    x = torch.tensor(np.stack(images)).unsqueeze(1).to(device)
+    x = (x - mean) / std
     probs = torch.softmax(model(x), dim=1).cpu().numpy()
     return probs.argmax(1), probs.max(1)
 
 
 def save_figures(gray, flat, mask, digits, images, preds, confs, label, out_prefix):
-    # 1) Ön işleme adımları
     vis = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
     for _, (x, y, w, h) in digits:
         cv2.rectangle(vis, (x, y), (x + w, y + h), (255, 0, 0), max(2, gray.shape[1] // 300))
@@ -152,7 +128,6 @@ def save_figures(gray, flat, mask, digits, images, preds, confs, label, out_pref
     plt.savefig(f"{out_prefix}_on_isleme.png", dpi=110)
     plt.close(fig)
 
-    # 2) 28x28 girdiler ve tahminler
     n = len(images)
     fig, axes = plt.subplots(1, n, figsize=(1.6 * n, 2.6))
     axes = np.atleast_1d(axes)
@@ -171,7 +146,7 @@ def save_figures(gray, flat, mask, digits, images, preds, confs, label, out_pref
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("image", help="okul numarasının fotoğrafı")
-    parser.add_argument("--label", help="gerçek numara (doğruluk hesabı için), ör. 2021123456")
+    parser.add_argument("--label", help="gerçek numara (doğruluk hesabı için)")
     parser.add_argument("--model", default="models/deney1_temel.pt")
     parser.add_argument("--all-models", action="store_true", help="models/ içindeki tüm modelleri karşılaştır")
     parser.add_argument("--no-thicken", action="store_true", help="çizgi kalınlaştırmayı kapat")
@@ -192,7 +167,7 @@ def main():
     base = os.path.splitext(os.path.basename(args.image))[0]
     out_dir = os.path.join(os.path.dirname(args.image) or ".", "islenmis")
     os.makedirs(out_dir, exist_ok=True)
-    for i, im in enumerate(images):  # modele verilen 28x28 görüntüler
+    for i, im in enumerate(images):
         Image.fromarray((im * 255).astype(np.uint8)).save(os.path.join(out_dir, f"{base}_rakam{i + 1}.png"))
 
     model, mean, std = load_model(args.model, device)
@@ -218,7 +193,7 @@ def main():
             print(f"{os.path.basename(path)[:-3]:28s} {pred_str:>14s}  {score}")
 
     if args.ablation:
-        # Her satırda tam ön işlemeden TEK bir adım çıkarılır (MNIST ile dağılım farkı büyür)
+        # Her satırda tam ön işlemeden sadece bir adım çıkarılır
         variants = {
             "Tam ön işleme": [to_mnist(c) for c, _ in digits],
             "Kalınlaştırma yok": [to_mnist(c, thicken=False) for c, _ in digits],

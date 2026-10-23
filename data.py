@@ -1,17 +1,3 @@
-"""
-Adım 1 - Veri hazırlama
-
-MNIST'in resmi hali 60.000 eğitim + 10.000 test görüntüsüdür.
-Biz resmi eğitim kümesini ikiye bölüyoruz:
-    - 50.000 train      -> modelin ağırlıkları bununla güncellenir
-    - 10.000 validation -> hiperparametre seçimi / overfitting takibi
-Resmi 10.000'lik test kümesine ise en sona kadar DOKUNMUYORUZ.
-
-Hız notu: MNIST küçük (~200 MB float32) olduğu için tüm veriyi bir kez tensöre
-çevirip (mümkünse GPU belleğine) koyuyoruz. Her epoch'ta görüntüleri tek tek
-PIL -> tensör dönüştürmek epoch başına ~23 sn sürüyordu.
-"""
-
 import torch
 from torch.utils.data import TensorDataset
 from torchvision import datasets
@@ -23,7 +9,6 @@ VAL_SIZE = 10_000
 
 
 def _to_float(raw):
-    """uint8 [N, 28, 28] (0-255) -> float [N, 1, 28, 28] (0-1)"""
     return raw.float().div(255.0).unsqueeze(1)
 
 
@@ -34,13 +19,11 @@ def get_datasets(device="cpu"):
     x_full, y_full = _to_float(full_train.data), full_train.targets
     x_test, y_test = _to_float(test_raw.data), test_raw.targets
 
-    # Sabit seed ile karıştırıp böl -> her çalıştırmada aynı train/val ayrımı
     generator = torch.Generator().manual_seed(SEED)
     perm = torch.randperm(len(x_full), generator=generator)
     train_idx, val_idx = perm[:TRAIN_SIZE], perm[TRAIN_SIZE:TRAIN_SIZE + VAL_SIZE]
 
-    # Normalizasyon istatistikleri SADECE train kümesinden hesaplanır.
-    # Validation/test verisinden istatistik çıkarmak veri sızıntısı (data leakage) olur.
+    # Veri sızıntısını önlemek için istatistikler sadece train kümesinden
     mean = x_full[train_idx].mean().item()
     std = x_full[train_idx].std().item()
 
@@ -54,9 +37,6 @@ def get_datasets(device="cpu"):
 
 
 class TensorLoader:
-    """DataLoader'ın sade hali. Veri zaten bellekte (GPU'da) olduğu için her batch'i
-    örnekleri tek tek okumak yerine karıştırılmış indekslerle tek hamlede dilimler."""
-
     def __init__(self, dataset, batch_size, shuffle):
         self.x, self.y = dataset.tensors
         self.batch_size, self.shuffle = batch_size, shuffle
@@ -96,7 +76,7 @@ if __name__ == "__main__":
     fig, axes = plt.subplots(2, 8, figsize=(12, 3.8))
     for ax, i in zip(axes.flat, range(16)):
         img, label = train_set[i]
-        ax.imshow(img.squeeze() * std + mean, cmap="gray")  # görselleştirmek için normalizasyonu geri al
+        ax.imshow(img.squeeze() * std + mean, cmap="gray")
         ax.set_title(str(label.item()))
         ax.axis("off")
     plt.suptitle("MNIST train kümesinden örnekler (siyah arka plan, beyaz rakam)")

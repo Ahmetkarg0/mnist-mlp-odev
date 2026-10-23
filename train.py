@@ -1,13 +1,3 @@
-"""
-Adım 3 - Eğitim döngüsü
-
-Her epoch'ta:
-    1. Train kümesinin tamamı batch batch modele verilir, ağırlıklar güncellenir.
-    2. Validation kümesinde (ağırlıklar GÜNCELLENMEDEN) loss/accuracy ölçülür.
-En iyi validation accuracy'ye sahip epoch'un ağırlıkları saklanır.
-Test kümesi sadece eğitim bittikten sonra, bir kez değerlendirilir.
-"""
-
 import copy
 import json
 import os
@@ -27,7 +17,6 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def set_seed(seed=42):
-    """Aynı ayarlarla her çalıştırmada aynı sonucu almak için."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -35,20 +24,20 @@ def set_seed(seed=42):
 
 
 def train_one_epoch(model, loader, loss_fn, optimizer):
-    model.train()  # dropout gibi katmanlar eğitim moduna geçer
-    # Toplamlar GPU'da tutulur; her batch'te .item() çağırmak GPU'yu bekletir.
+    model.train()
+    # Toplamlar GPU'da tutulur; her batch'te .item() çağırmak GPU'yu bekletir
     total_loss = torch.zeros((), device=DEVICE)
     correct = torch.zeros((), device=DEVICE)
     n = 0
     for images, labels in loader:
         images, labels = images.to(DEVICE), labels.to(DEVICE)
 
-        logits = model(images)            # 1) forward pass
-        loss = loss_fn(logits, labels)    # 2) loss hesapla
+        logits = model(images)
+        loss = loss_fn(logits, labels)
 
-        optimizer.zero_grad()             # 3) eski gradyanları sıfırla
-        loss.backward()                   # 4) backpropagation: gradyanları hesapla
-        optimizer.step()                  # 5) ağırlıkları güncelle
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
         total_loss += loss.detach() * labels.size(0)
         correct += (logits.argmax(dim=1) == labels).sum()
@@ -56,9 +45,9 @@ def train_one_epoch(model, loader, loss_fn, optimizer):
     return total_loss.item() / n, correct.item() / n
 
 
-@torch.no_grad()  # değerlendirmede gradyan hesaplamaya gerek yok
+@torch.no_grad()
 def evaluate(model, loader, loss_fn):
-    model.eval()  # dropout kapanır
+    model.eval()
     total_loss, correct, n = 0.0, 0, 0
     for images, labels in loader:
         images, labels = images.to(DEVICE), labels.to(DEVICE)
@@ -109,7 +98,7 @@ def run_experiment(name, hidden_sizes=(256, 128), dropout=0.0, optimizer_name="a
                   f"| val loss {va_loss:.4f} acc {va_acc:.4f}")
     train_time = time.perf_counter() - start
 
-    # Model seçimi validation'a göre yapıldı; test sadece şimdi, bir kez kullanılıyor.
+    # Model seçimi validation'a göre yapıldı; test sadece burada, bir kez kullanılır
     model.load_state_dict(best_state)
     test_loss, test_acc = evaluate(model, test_loader, loss_fn)
 
@@ -158,7 +147,6 @@ def plot_history(results, path):
 
 
 if __name__ == "__main__":
-    # Deney 1 - Temel MLP modeli
     results = run_experiment("deney1_temel", hidden_sizes=(256, 128), optimizer_name="adam",
                              lr=1e-3, batch_size=64, epochs=20)
     plot_history(results, "outputs/deney1_temel_grafikler.png")
