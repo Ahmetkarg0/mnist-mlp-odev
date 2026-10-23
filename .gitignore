@@ -1,0 +1,7 @@
+# MNIST ilk çalıştırmada otomatik indirilir
+mnist_data/
+__pycache__/
+
+# Modeller yeniden eğitilerek üretilebilir; el yazısı testi için sadece temel model repoda
+models/*.pt
+!models/deney1_temel.pt
